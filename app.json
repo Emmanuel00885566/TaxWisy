@@ -1,0 +1,26 @@
+{
+  "expo": {
+    "name": "TaxWisy",
+    "slug": "TaxWisy",
+    "scheme": "taxwisy",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/logo.jpg",
+    "userInterfaceStyle": "light",
+    "ios": {
+      "supportsTablet": true
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/logo.jpg",
+        "backgroundColor": "#0a0a1a"
+      },
+      "package": "com.taxwisy.app"
+    },
+    "extra": {
+      "eas": {
+        "projectId": "aae74157-12ba-4b45-a4eb-8a8b43c334d5"
+      }
+    }
+  }
+}
