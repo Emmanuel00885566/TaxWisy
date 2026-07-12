@@ -15,20 +15,18 @@ export default function AppNavigator() {
   const { user, loading } = useContext(AuthContext);
 
   const linking = {
-    prefixes: [prefix, 'taxtracker://'],
-    config: {
-      screens: {
-        // For logged out users
-        AuthNavigator: {
-          screens: {
-            ResetPassword: 'reset-password/:token',
-          },
+  prefixes: [prefix, 'taxwisy://'],
+  config: {
+    screens: {
+      AuthNavigator: {
+        screens: {
+          ResetPassword: 'reset-password/:token',
         },
-        // For logged in users
-        ChangePassword: 'change-password',
       },
+      ChangePassword: 'change-password',
     },
-  };
+  },
+};
 
   if (loading) return <Loader message="Starting Tax Tracker..." />;
 

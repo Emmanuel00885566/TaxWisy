@@ -17,11 +17,12 @@ import Button from '../../components/Button';
 export default function ComputeTaxModal({ visible, onClose, onCompute, accountType }) {
   const [loading, setLoading] = useState(false);
   const isBusiness = accountType === 'business';
+  const currentYear = new Date().getFullYear();
 
   const [form, setForm] = useState({
     taxType: isBusiness ? 'CIT' : 'PIT',
-    startDate: '2025-01-01',
-    endDate: '2025-12-31',
+    startDate: `${currentYear}-01-01`,
+    endDate: `${currentYear}-12-31`,
     turnover: '',
     month: 'December',
   });
@@ -38,11 +39,8 @@ export default function ComputeTaxModal({ visible, onClose, onCompute, accountTy
 
   const validate = () => {
     const newErrors = {};
-    if (!form.turnover) newErrors.turnover = 'Turnover/Income is required';
-    else if (isNaN(Number(form.turnover)))
-      newErrors.turnover = 'Enter a valid amount';
-    else if (Number(form.turnover) <= 0)
-      newErrors.turnover = 'Amount must be greater than 0';
+    if (isBusiness && !form.turnover)
+      newErrors.turnover = 'Turnover is required for CIT';
     if (!form.startDate) newErrors.startDate = 'Start date is required';
     if (!form.endDate) newErrors.endDate = 'End date is required';
     setErrors(newErrors);
@@ -97,7 +95,7 @@ export default function ComputeTaxModal({ visible, onClose, onCompute, accountTy
             showsVerticalScrollIndicator={false}
             keyboardShouldPersistTaps="handled"
           >
-            {/* Tax Type */}
+            {/* Tax Type Badge */}
             <View style={styles.taxTypeRow}>
               <View style={[styles.taxTypeBadge,
                 { backgroundColor: isBusiness ? COLORS.warningLight : COLORS.primaryLight }
@@ -114,21 +112,30 @@ export default function ComputeTaxModal({ visible, onClose, onCompute, accountTy
             <View style={styles.infoBanner}>
               <Text style={styles.infoText}>
                 {isBusiness
-                  ? '20% for turnover below ₦100M\n30% for turnover ₦100M and above'
-                  : 'Progressive brackets from 7% to 24%\nbased on your annual income'}
+                  ? '📊 CIT Rate:\n• Below ₦100M turnover → 20% rate\n• ₦100M and above → 30% rate\n\n💡 Tax is calculated from your recorded income transactions.'
+                  : '📊 PIT progressive brackets from 7% to 24%\nbased on your recorded annual income.'}
               </Text>
             </View>
 
-            {/* Turnover */}
-            <Input
-              label={isBusiness ? 'Annual Turnover (₦)' : 'Annual Income (₦)'}
-              placeholder="enter total amount"
-              value={form.turnover}
-              onChangeText={(text) => updateForm('turnover', text)}
-              keyboardType="numeric"
-              icon="₦"
-              error={errors.turnover}
-            />
+            {/* Turnover — only for business */}
+            {isBusiness && (
+              <>
+                <Input
+                  label="Annual Turnover (₦) — Determines your tax rate"
+                  placeholder="enter your total annual turnover"
+                  value={form.turnover}
+                  onChangeText={(text) => updateForm('turnover', text)}
+                  keyboardType="numeric"
+                  icon="₦"
+                  error={errors.turnover}
+                />
+                <View style={styles.turnoverHint}>
+                  <Text style={styles.turnoverHintText}>
+                    ℹ️ Enter your total company turnover to determine if you pay 20% or 30% CIT
+                  </Text>
+                </View>
+              </>
+            )}
 
             {/* Date Range */}
             <Input
@@ -267,6 +274,21 @@ const styles = StyleSheet.create({
     fontSize: SIZES.sm,
     fontFamily: FONTS.regular,
     lineHeight: 22,
+  },
+  turnoverHint: {
+    backgroundColor: COLORS.warningLight,
+    borderRadius: SIZES.radius.sm,
+    padding: SIZES.spacing.sm,
+    marginBottom: SIZES.spacing.md,
+    marginTop: -SIZES.spacing.sm,
+    borderWidth: 1,
+    borderColor: COLORS.warning + '44',
+  },
+  turnoverHintText: {
+    color: COLORS.warning,
+    fontSize: SIZES.xs,
+    fontFamily: FONTS.regular,
+    lineHeight: 18,
   },
   label: {
     color: COLORS.textSecondary,

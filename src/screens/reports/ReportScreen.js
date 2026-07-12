@@ -1,4 +1,4 @@
-import { useState, useContext } from 'react';
+import { useState, useContext, useEffect } from 'react';
 import {
   View,
   Text,
@@ -13,6 +13,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { COLORS, FONTS, SIZES } from '../../utils/theme';
 import { AuthContext } from '../../context/AuthContext';
 import { TransactionContext } from '../../context/TransactionContext';
+import dashboardService from '../../services/dashboardService';
 import Header from '../../components/Header';
 import Card from '../../components/Card';
 import Button from '../../components/Button';
@@ -22,78 +23,84 @@ const BASE_URL = 'https://tax-tracker-backend.onrender.com/api';
 
 export default function ReportScreen() {
   const { user } = useContext(AuthContext);
-  const { summary } = useContext(TransactionContext);
-
+  const { summary, fetchSummary } = useContext(TransactionContext);
+  const [dashboardData, setDashboardData] = useState(null);
   const [format, setFormat] = useState('pdf');
   const [reportType, setReportType] = useState('summary');
-  const [fromDate, setFromDate] = useState('2025-01-01');
-  const [toDate, setToDate] = useState('2025-12-31');
+  const [fromDate, setFromDate] = useState('2026-01-01');
+  const [toDate, setToDate] = useState('2026-12-31');
   const [loading, setLoading] = useState(false);
 
+  const userId = user?.userId || user?.id;
   const isBusinessUser = user?.account_type === 'business';
+
+  useEffect(() => {
+    if (userId) {
+      fetchSummary();
+      dashboardService.getSummary(userId).then(result => {
+        if (result.success) setDashboardData(result.data);
+      });
+    }
+  }, [userId]);
 
   const formatAmount = (amt) =>
     `₦${Number(amt || 0).toLocaleString('en-NG')}`;
 
-  const totalIncome = summary?.totalIncome || 0;
-  const totalExpenses = summary?.totalExpenses || 0;
-  const taxableIncome = totalIncome - totalExpenses;
+  const totalIncome = dashboardData?.overview?.totalIncome || summary?.totalIncome || 0;
+  const totalExpenses = dashboardData?.overview?.totalExpenses || summary?.totalExpenses || 0;
+  const taxableIncome = dashboardData?.overview?.taxableIncome || (totalIncome - totalExpenses);
+  const unpaidTax = dashboardData?.tax?.unpaidAmount || 0;
+  const totalTaxRecords = dashboardData?.tax?.totalRecords || 0;
+  const paidTaxRecords = dashboardData?.tax?.paidRecords || 0;
 
   const handleDownload = async () => {
-  setLoading(true);
-  try {
-    const token = await AsyncStorage.getItem('token');
-    console.log('🔑 Token exists:', !!token);
-    console.log('🔑 Token preview:', token?.slice(0, 50));
+    setLoading(true);
+    try {
+      const token = await AsyncStorage.getItem('token');
 
-    if (!token) {
-      Alert.alert('Error', 'Session expired. Please login again.');
-      return;
-    }
-
-    const url = `${BASE_URL}/report/download?format=${format}&type=${reportType}&from=${fromDate}&to=${toDate}`;
-    console.log('📄 Downloading from:', url);
-
-    const fileExtension = format === 'pdf' ? 'pdf' : 'csv';
-    const fileName = `taxbuddy_report_${Date.now()}.${fileExtension}`;
-    const fileUri = FileSystem.documentDirectory + fileName;
-
-    const downloadResult = await FileSystem.downloadAsync(
-      url,
-      fileUri,
-      {
-        headers: {
-          Authorization: `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
+      if (!token) {
+        Alert.alert('Error', 'Session expired. Please login again.');
+        return;
       }
-    );
 
-    console.log('📄 Status:', downloadResult.status);
-    console.log('📄 Headers:', JSON.stringify(downloadResult.headers));
+      const url = `${BASE_URL}/report/download?format=${format}&type=${reportType}&from=${fromDate}&to=${toDate}`;
 
-    if (downloadResult.status === 200) {
-      const canShare = await Sharing.isAvailableAsync();
-      if (canShare) {
-        await Sharing.shareAsync(downloadResult.uri, {
-          mimeType: format === 'pdf' ? 'application/pdf' : 'text/csv',
-          dialogTitle: `TaxBuddy ${format.toUpperCase()} Report`,
-        });
+      const fileExtension = format === 'pdf' ? 'pdf' : 'csv';
+      const fileName = `taxwisy_report_${Date.now()}.${fileExtension}`;
+      const fileUri = FileSystem.documentDirectory + fileName;
+
+      const downloadResult = await FileSystem.downloadAsync(
+        url,
+        fileUri,
+        {
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'application/json',
+          },
+        }
+      );
+
+      if (downloadResult.status === 200) {
+        const canShare = await Sharing.isAvailableAsync();
+        if (canShare) {
+          await Sharing.shareAsync(downloadResult.uri, {
+            mimeType: format === 'pdf' ? 'application/pdf' : 'text/csv',
+            dialogTitle: `TaxWisy ${format.toUpperCase()} Report`,
+          });
+        } else {
+          Alert.alert('Downloaded! ✅', `Saved to: ${downloadResult.uri}`);
+        }
+      } else if (downloadResult.status === 403) {
+        Alert.alert('Session Expired', 'Please logout and login again.');
       } else {
-        Alert.alert('Downloaded! ✅', `Saved to: ${downloadResult.uri}`);
+        Alert.alert('Error', `Download failed with status: ${downloadResult.status}`);
       }
-    } else if (downloadResult.status === 403) {
-      Alert.alert('Session Expired', 'Please logout and login again.');
-    } else {
-      Alert.alert('Error', `Download failed with status: ${downloadResult.status}`);
+    } catch (error) {
+      Alert.alert('Error', error.message);
+    } finally {
+      setLoading(false);
     }
-  } catch (error) {
-    console.log('📄 Download error:', error.message);
-    Alert.alert('Error', error.message);
-  } finally {
-    setLoading(false);
-  }
-};
+  };
 
   return (
     <View style={styles.container}>
@@ -135,6 +142,31 @@ export default function ReportScreen() {
           <View style={styles.taxableRow}>
             <Text style={styles.taxableLabel}>Taxable Income</Text>
             <Text style={styles.taxableAmount}>{formatAmount(taxableIncome)}</Text>
+          </View>
+        </Card>
+
+        {/* Tax Status Card */}
+        <Card style={styles.taxStatusCard}>
+          <Text style={styles.taxStatusTitle}>Tax Status</Text>
+          <View style={styles.taxStatusRow}>
+            <View style={styles.taxStatusItem}>
+              <Text style={styles.taxStatusNumber}>{totalTaxRecords}</Text>
+              <Text style={styles.taxStatusLabel}>Total Records</Text>
+            </View>
+            <View style={styles.taxStatusDivider} />
+            <View style={styles.taxStatusItem}>
+              <Text style={[styles.taxStatusNumber, { color: COLORS.primary }]}>
+                {paidTaxRecords}
+              </Text>
+              <Text style={styles.taxStatusLabel}>Paid</Text>
+            </View>
+            <View style={styles.taxStatusDivider} />
+            <View style={styles.taxStatusItem}>
+              <Text style={[styles.taxStatusNumber, { color: COLORS.warning }]}>
+                {formatAmount(unpaidTax)}
+              </Text>
+              <Text style={styles.taxStatusLabel}>Outstanding</Text>
+            </View>
           </View>
         </Card>
 
@@ -210,15 +242,14 @@ export default function ReportScreen() {
             </View>
           </View>
 
-          {/* Quick date presets */}
           <View style={styles.presetRow}>
             {[
-              { label: 'Q1', from: '2025-01-01', to: '2025-03-31' },
-              { label: 'Q2', from: '2025-04-01', to: '2025-06-30' },
-              { label: 'Q3', from: '2025-07-01', to: '2025-09-30' },
-              { label: 'Q4', from: '2025-10-01', to: '2025-12-31' },
-              { label: 'Full Year', from: '2025-01-01', to: '2025-12-31' },
-              { label: '2026', from: '2026-01-01', to: '2026-12-31' },
+              { label: 'Q1 2026', from: '2026-01-01', to: '2026-03-31' },
+              { label: 'Q2 2026', from: '2026-04-01', to: '2026-06-30' },
+              { label: 'Q3 2026', from: '2026-07-01', to: '2026-09-30' },
+              { label: 'Q4 2026', from: '2026-10-01', to: '2026-12-31' },
+              { label: 'Full 2026', from: '2026-01-01', to: '2026-12-31' },
+              { label: 'Full 2025', from: '2025-01-01', to: '2025-12-31' },
             ].map((preset) => (
               <TouchableOpacity
                 key={preset.label}
@@ -253,6 +284,7 @@ export default function ReportScreen() {
             'Tax payable amount',
             `${isBusinessUser ? 'CIT' : 'PIT'} breakdown`,
             'Transaction history',
+            'Tax payment status',
           ].map((item) => (
             <View key={item} style={styles.includeItem}>
               <Text style={styles.includeCheck}>✓</Text>
@@ -281,7 +313,7 @@ const styles = StyleSheet.create({
     paddingBottom: SIZES.spacing.xxl,
   },
   summaryCard: {
-    marginBottom: SIZES.spacing.lg,
+    marginBottom: SIZES.spacing.md,
     borderColor: COLORS.primary + '33',
   },
   summaryHeader: {
@@ -336,6 +368,41 @@ const styles = StyleSheet.create({
     fontSize: SIZES.lg,
     fontFamily: FONTS.extraBold,
     color: COLORS.primary,
+  },
+  taxStatusCard: {
+    marginBottom: SIZES.spacing.md,
+    borderColor: COLORS.warning + '33',
+  },
+  taxStatusTitle: {
+    fontSize: SIZES.md,
+    fontFamily: FONTS.bold,
+    color: COLORS.textPrimary,
+    marginBottom: SIZES.spacing.md,
+  },
+  taxStatusRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  taxStatusItem: {
+    flex: 1,
+    alignItems: 'center',
+  },
+  taxStatusNumber: {
+    fontSize: SIZES.lg,
+    fontFamily: FONTS.bold,
+    color: COLORS.textPrimary,
+    marginBottom: 4,
+  },
+  taxStatusLabel: {
+    fontSize: SIZES.xs,
+    fontFamily: FONTS.regular,
+    color: COLORS.textSecondary,
+    textAlign: 'center',
+  },
+  taxStatusDivider: {
+    width: 1,
+    height: 40,
+    backgroundColor: COLORS.border,
   },
   sectionLabel: {
     fontSize: SIZES.md,

@@ -1,4 +1,5 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as FileSystem from 'expo-file-system';
 
 const BASE_URL = 'https://tax-tracker-backend.onrender.com/api';
 
@@ -166,35 +167,58 @@ const authService = {
     }
   },
 
-  uploadAvatar: async (imageUri) => {
-    try {
-      const token = await AsyncStorage.getItem('token');
+uploadAvatar: async (imageUri) => {
+  try {
+    const token = await AsyncStorage.getItem('token');
 
-      const formData = new FormData();
+    const CLOUD_NAME = 'dkb9g9jib';
+    const UPLOAD_PRESET = 'taxwisy_avatars';
 
-      formData.append('avatar', {
-        uri: imageUri,
-        type: 'image/jpeg',
-        name: 'avatar.jpg',
-      });
+    console.log('☁️ Uploading to Cloudinary...');
 
-      const response = await fetch(
-        `${BASE_URL}/auth/profile/avatar`,
-        {
-          method: 'PATCH',
-          headers: {
-            Authorization: `Bearer ${token}`,
-            'Content-Type': 'multipart/form-data',
-          },
-          body: formData,
-        }
-      );
+    const uploadResult = await FileSystem.uploadAsync(
+      `https://api.cloudinary.com/v1_1/${CLOUD_NAME}/image/upload`,
+      imageUri,
+      {
+        httpMethod: 'POST',
+        uploadType: FileSystem.FileSystemUploadType.MULTIPART,
+        fieldName: 'file',
+        parameters: {
+          upload_preset: UPLOAD_PRESET,
+          folder: 'taxwisy/avatars',
+        },
+      }
+    );
 
-      return await response.json();
-    } catch (error) {
-      throw new Error('Failed to upload image.');
+    const cloudinaryResult = JSON.parse(uploadResult.body);
+    console.log('☁️ Cloudinary result:', JSON.stringify(cloudinaryResult));
+
+    if (!cloudinaryResult.secure_url) {
+      throw new Error(cloudinaryResult.error?.message || 'Upload failed');
     }
-  },
+
+    const imageUrl = cloudinaryResult.secure_url;
+
+    const backendResponse = await fetch(
+      'https://tax-tracker-backend.onrender.com/api/auth/profile/avatar',
+      {
+        method: 'PATCH',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ avatar: imageUrl }),
+      }
+    );
+
+    const result = await backendResponse.json();
+    console.log('📤 Backend result:', JSON.stringify(result));
+    return result;
+  } catch (error) {
+    console.log('📤 Upload error:', error.message);
+    throw new Error(error.message || 'Failed to upload image.');
+  }
+},
 
   // ==========================
   // STORAGE

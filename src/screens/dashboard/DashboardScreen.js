@@ -1,337 +1,324 @@
-import { useState, useContext } from 'react';
+import { useState, useContext, useEffect } from 'react';
 import {
   View,
   Text,
   StyleSheet,
   ScrollView,
+  RefreshControl,
   TouchableOpacity,
-  Alert,
-  Image,
-  ActivityIndicator,
 } from 'react-native';
-import * as ImagePicker from 'expo-image-picker';
 import { COLORS, FONTS, SIZES, SHADOWS } from '../../utils/theme';
 import { AuthContext } from '../../context/AuthContext';
-import { TransactionContext } from '../../context/TransactionContext';
-import authService from '../../services/authService';
-import Header from '../../components/Header';
+import dashboardService from '../../services/dashboardService';
 import Card from '../../components/Card';
-import Badge from '../../components/Badge';
-import { sendTestNotification, scheduleTaxReminder } from '../../utils/notifications';
+import Loader from '../../components/Loader';
+import EmptyState from '../../components/EmptyState';
+import TransactionCard from '../../components/TransactionCard';
+import TaxSummaryCard from '../../components/TaxSummaryCard';
+import IncomeExpenseChart from '../../components/IncomeExpenseChart';
 
-export default function ProfileScreen({ navigation }) {
-  const { user, logout, login } = useContext(AuthContext);
-  const { summary } = useContext(TransactionContext);
-  const [loggingOut, setLoggingOut] = useState(false);
-  const [uploadingAvatar, setUploadingAvatar] = useState(false);
+export default function DashboardScreen({ navigation }) {
+  const { user } = useContext(AuthContext);
+  const [dashboard, setDashboard] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
 
+  const userId = user?.userId || user?.id;
+  const firstName = user?.fullname?.split(' ')[0] || 'User';
   const isBusinessUser = user?.account_type === 'business';
+
+  const fetchDashboard = async () => {
+    if (!userId) return;
+    try {
+      const result = await dashboardService.getSummary(userId);
+      if (result.success) {
+        setDashboard(result.data);
+      }
+    } catch (error) {
+      console.log('Dashboard error:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchDashboard();
+  }, [userId]);
+
+  const onRefresh = async () => {
+    setRefreshing(true);
+    await fetchDashboard();
+    setRefreshing(false);
+  };
 
   const formatAmount = (amt) =>
     `₦${Number(amt || 0).toLocaleString('en-NG')}`;
 
-  const handlePickImage = async () => {
-    try {
-      // Request permission
-      const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-      if (status !== 'granted') {
-        Alert.alert(
-          'Permission Required',
-          'Please allow access to your photo library to upload a profile picture.'
-        );
-        return;
-      }
+  const prepareChartData = () => {
+    if (!dashboard) return [];
 
-      Alert.alert(
-        'Update Profile Picture',
-        'Choose an option',
-        [
-          { text: 'Cancel', style: 'cancel' },
-          {
-            text: '📷 Take Photo',
-            onPress: async () => {
-              const { status: cameraStatus } =
-                await ImagePicker.requestCameraPermissionsAsync();
-              if (cameraStatus !== 'granted') return;
+    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+                    'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    const currentMonth = new Date().getMonth();
 
-              const result = await ImagePicker.launchCameraAsync({
-                allowsEditing: true,
-                aspect: [1, 1],
-                quality: 0.8,
-              });
-
-              if (!result.canceled) {
-                await handleUpload(result.assets[0].uri);
-              }
-            },
-          },
-          {
-            text: '🖼️ Choose from Gallery',
-            onPress: async () => {
-              const result = await ImagePicker.launchImageLibraryAsync({
-                mediaTypes: ImagePicker.MediaTypeOptions.Images,
-                allowsEditing: true,
-                aspect: [1, 1],
-                quality: 0.8,
-              });
-
-              if (!result.canceled) {
-                await handleUpload(result.assets[0].uri);
-              }
-            },
-          },
-        ]
-      );
-    } catch (error) {
-      Alert.alert('Error', 'Failed to pick image');
+    const last6Months = [];
+    for (let i = 5; i >= 0; i--) {
+      const monthIndex = (currentMonth - i + 12) % 12;
+      last6Months.push({
+        month: months[monthIndex],
+        monthIndex,
+        income: 0,
+        expenses: 0,
+      });
     }
-  };
 
-  const handleUpload = async (imageUri) => {
-    setUploadingAvatar(true);
-    try {
-      const result = await authService.uploadAvatar(imageUri);
-      if (result.success) {
-        // Update user in context with new avatar
-        const updatedUser = { ...user, avatar: result.data.avatar };
-        await login(updatedUser);
-        Alert.alert('Success! ✅', 'Profile picture updated successfully!');
-      } else {
-        Alert.alert('Error', result.message || 'Failed to upload image');
+    const allTransactions = dashboard.recentTransactions || [];
+    allTransactions.forEach((t) => {
+      const date = new Date(t.date);
+      const monthIndex = date.getMonth();
+      const entry = last6Months.find((m) => m.monthIndex === monthIndex);
+      if (entry) {
+        if (t.type === 'income') entry.income += Number(t.amount);
+        if (t.type === 'expense') entry.expenses += Number(t.amount);
       }
-    } catch (error) {
-      Alert.alert('Error', error.message);
-    } finally {
-      setUploadingAvatar(false);
-    }
+    });
+
+    return last6Months;
   };
 
-  const handleLogout = () => {
-    Alert.alert(
-      'Logout',
-      'Are you sure you want to logout?',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Logout',
-          style: 'destructive',
-          onPress: async () => {
-            setLoggingOut(true);
-            try {
-              await authService.logout();
-              await logout();
-            } catch (error) {
-              console.log('Logout error:', error);
-            } finally {
-              setLoggingOut(false);
-            }
-          },
-        },
-      ]
-    );
-  };
+  const totalIncome = dashboard?.overview?.totalIncome || 0;
+  const totalExpenses = dashboard?.overview?.totalExpenses || 0;
+  const taxableIncome = dashboard?.overview?.taxableIncome || 0;
+  const recentTransactions = dashboard?.recentTransactions || [];
+  const latestTaxRecord = dashboard?.tax?.latestRecord || null;
+  const unpaidTax = dashboard?.tax?.unpaidAmount || 0;
+  const monthlyIncome = dashboard?.monthly?.income || 0;
+  const monthlyExpenses = dashboard?.monthly?.expenses || 0;
+  const currentMonth = dashboard?.monthly?.month || '';
 
-  const menuItems = [
-    {
-      icon: '🔔',
-      label: 'Tax Reminders',
-      sub: user?.tax_reminder ? 'Enabled' : 'Disabled',
-      onPress: () => {
-        Alert.alert(
-          'Tax Reminders',
-          'Would you like to schedule tax deadline reminders?',
-          [
-            { text: 'Cancel', style: 'cancel' },
-            {
-              text: 'Send Test Now',
-              onPress: async () => {
-                await sendTestNotification();
-                Alert.alert('✅ Done', 'You will receive a test notification in 3 seconds!');
-              },
-            },
-            {
-              text: 'Schedule All',
-              onPress: async () => {
-                await scheduleTaxReminder(7);
-                Alert.alert('✅ Done', 'Tax deadline reminders scheduled!');
-              },
-            },
-          ]
-        );
-      },
-    },
-    {
-      icon: '🔒',
-      label: 'Change Password',
-      sub: 'Update your password',
-      onPress: () => navigation.navigate('ChangePassword'),
-    },
-    {
-      icon: '📋',
-      label: 'Tax Information',
-      sub: isBusinessUser ? 'Company Income Tax (CIT)' : 'Personal Income Tax (PIT)',
-      onPress: () => Alert.alert(
-        isBusinessUser ? 'CIT Info' : 'PIT Info',
-        isBusinessUser
-          ? '20% for turnover below ₦100M\n30% for ₦100M and above'
-          : 'Progressive tax brackets from 7% to 24% based on annual income per Nigeria PIT Act'
-      ),
-    },
-    {
-      icon: '📞',
-      label: 'Support',
-      sub: 'Get help with TaxBuddy',
-      onPress: () => Alert.alert('Support', 'Contact us at support@taxbuddy.ng'),
-    },
-    {
-      icon: '⚖️',
-      label: 'Legal & Privacy',
-      sub: 'Terms of service and privacy policy',
-      onPress: () => Alert.alert('Legal', 'TaxBuddy complies with FIRS guidelines and Nigerian tax law.'),
-    },
-  ];
+  if (loading && !refreshing) return <Loader message="Loading dashboard..." />;
 
   return (
-    <View style={styles.container}>
-      <Header
-        title="Profile"
-        subtitle="Your account details"
-      />
+    <ScrollView
+      style={styles.container}
+      contentContainerStyle={styles.content}
+      showsVerticalScrollIndicator={false}
+      refreshControl={
+        <RefreshControl
+          refreshing={refreshing}
+          onRefresh={onRefresh}
+          tintColor={COLORS.primary}
+        />
+      }
+    >
+      {/* Header */}
+      <View style={styles.header}>
+        <View>
+          <Text style={styles.greeting}>Good day, {firstName} 👋</Text>
+          <Text style={styles.subGreeting}>
+            {isBusinessUser ? '🏢 Business Account (CIT)' : '👤 Individual Account (PIT)'}
+          </Text>
+        </View>
+        <TouchableOpacity
+          style={styles.notifButton}
+          onPress={() => navigation.navigate('Profile')}
+        >
+          <Text style={styles.notifIcon}>👤</Text>
+        </TouchableOpacity>
+      </View>
 
-      <ScrollView
-        contentContainerStyle={styles.content}
-        showsVerticalScrollIndicator={false}
-      >
-        {/* Profile Card */}
-        <Card style={styles.profileCard}>
-          {/* Avatar */}
-          <TouchableOpacity
-            style={styles.avatarContainer}
-            onPress={handlePickImage}
-            disabled={uploadingAvatar}
-          >
-            {uploadingAvatar ? (
-              <View style={styles.avatar}>
-                <ActivityIndicator color={COLORS.background} size="large" />
-              </View>
-            ) : user?.avatar ? (
-              <Image
-                source={{ uri: user.avatar }}
-                style={styles.avatarImage}
-              />
-            ) : (
-              <View style={styles.avatar}>
-                <Text style={styles.avatarText}>
-                  {user?.fullname?.charAt(0)?.toUpperCase() || 'U'}
-                </Text>
-              </View>
-            )}
-            <View style={styles.avatarEditBadge}>
-              <Text style={styles.avatarEditIcon}>📷</Text>
+      {/* Balance Overview Card */}
+      <View style={styles.balanceCard}>
+        <View style={styles.balanceGlow} />
+        <Text style={styles.balanceLabel}>Total Taxable Income</Text>
+        <Text style={styles.balanceAmount}>{formatAmount(taxableIncome)}</Text>
+        <Text style={styles.balanceSub}>
+          Based on your income and deductible expenses
+        </Text>
+
+        <View style={styles.balanceRow}>
+          <View style={styles.balanceItem}>
+            <View style={[styles.balanceDot, { backgroundColor: COLORS.income }]} />
+            <View>
+              <Text style={styles.balanceItemLabel}>Total Income</Text>
+              <Text style={[styles.balanceItemAmount, { color: COLORS.income }]}>
+                {formatAmount(totalIncome)}
+              </Text>
             </View>
-            <View style={styles.profileGlow} />
+          </View>
+
+          <View style={styles.balanceDivider} />
+
+          <View style={styles.balanceItem}>
+            <View style={[styles.balanceDot, { backgroundColor: COLORS.expense }]} />
+            <View>
+              <Text style={styles.balanceItemLabel}>Total Expenses</Text>
+              <Text style={[styles.balanceItemAmount, { color: COLORS.expense }]}>
+                {formatAmount(totalExpenses)}
+              </Text>
+            </View>
+          </View>
+        </View>
+      </View>
+
+      {/* Monthly Summary */}
+      <View style={styles.monthlyRow}>
+        <Card style={styles.monthlyCard}>
+          <Text style={styles.monthlyLabel}>This Month Income</Text>
+          <Text style={[styles.monthlyAmount, { color: COLORS.income }]}>
+            {formatAmount(monthlyIncome)}
+          </Text>
+          <Text style={styles.monthlyPeriod}>{currentMonth}</Text>
+        </Card>
+        <Card style={styles.monthlyCard}>
+          <Text style={styles.monthlyLabel}>This Month Expenses</Text>
+          <Text style={[styles.monthlyAmount, { color: COLORS.expense }]}>
+            {formatAmount(monthlyExpenses)}
+          </Text>
+          <Text style={styles.monthlyPeriod}>{currentMonth}</Text>
+        </Card>
+      </View>
+
+      {/* Income vs Expense Chart */}
+      {dashboard && (
+        <View style={styles.chartContainer}>
+          <IncomeExpenseChart data={prepareChartData()} />
+        </View>
+      )}
+
+      {/* Unpaid Tax Alert */}
+      {unpaidTax > 0 && (
+        <TouchableOpacity
+          style={styles.taxAlert}
+          onPress={() => navigation.navigate('Tax')}
+        >
+          <Text style={styles.taxAlertIcon}>⚠️</Text>
+          <View style={styles.taxAlertText}>
+            <Text style={styles.taxAlertTitle}>Unpaid Tax Due</Text>
+            <Text style={styles.taxAlertAmount}>{formatAmount(unpaidTax)}</Text>
+          </View>
+          <Text style={styles.taxAlertArrow}>›</Text>
+        </TouchableOpacity>
+      )}
+
+      {/* Quick Actions */}
+      <View style={styles.quickActions}>
+        <TouchableOpacity
+          style={styles.quickAction}
+          onPress={() => navigation.navigate('Transactions')}
+        >
+          <View style={[styles.quickActionIcon, { backgroundColor: COLORS.incomeLight }]}>
+            <Text style={styles.quickActionEmoji}>💰</Text>
+          </View>
+          <Text style={styles.quickActionLabel}>Add Income</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={styles.quickAction}
+          onPress={() => navigation.navigate('Transactions')}
+        >
+          <View style={[styles.quickActionIcon, { backgroundColor: COLORS.expenseLight }]}>
+            <Text style={styles.quickActionEmoji}>💸</Text>
+          </View>
+          <Text style={styles.quickActionLabel}>Add Expense</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={styles.quickAction}
+          onPress={() => navigation.navigate('Tax')}
+        >
+          <View style={[styles.quickActionIcon, { backgroundColor: COLORS.warningLight }]}>
+            <Text style={styles.quickActionEmoji}>📊</Text>
+          </View>
+          <Text style={styles.quickActionLabel}>Compute Tax</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={styles.quickAction}
+          onPress={() => navigation.navigate('Reports')}
+        >
+          <View style={[styles.quickActionIcon, { backgroundColor: 'rgba(124, 58, 237, 0.15)' }]}>
+            <Text style={styles.quickActionEmoji}>📄</Text>
+          </View>
+          <Text style={styles.quickActionLabel}>Reports</Text>
+        </TouchableOpacity>
+      </View>
+
+      {/* Latest Tax Record */}
+      <View style={styles.section}>
+        <View style={styles.sectionHeader}>
+          <Text style={styles.sectionTitle}>Tax Summary</Text>
+          <TouchableOpacity onPress={() => navigation.navigate('Tax')}>
+            <Text style={styles.seeAll}>See All →</Text>
           </TouchableOpacity>
-
-          <Text style={styles.fullname}>{user?.fullname}</Text>
-          <Text style={styles.email}>{user?.email}</Text>
-
-          <View style={styles.badgeRow}>
-            <Badge
-              label={isBusinessUser ? 'Business (CIT)' : 'Individual (PIT)'}
-              type={user?.isVerified ? 'paid' : 'unpaid'}
-            />
-            {user?.isVerified && (
-              <Badge label="✓ Verified" type="paid" />
-            )}
-          </View>
-
-          {user?.tin && (
-            <View style={styles.tinRow}>
-              <Text style={styles.tinLabel}>TIN:</Text>
-              <Text style={styles.tinValue}>{user.tin}</Text>
-            </View>
-          )}
-
-          <Text style={styles.tapToChange}>Tap photo to change</Text>
-        </Card>
-
-        {/* Stats Card */}
-        <Card style={styles.statsCard}>
-          <Text style={styles.statsTitle}>Financial Overview</Text>
-          <View style={styles.statsRow}>
-            <View style={styles.statItem}>
-              <Text style={[styles.statAmount, { color: COLORS.income }]}>
-                {formatAmount(summary?.totalIncome)}
-              </Text>
-              <Text style={styles.statLabel}>Total Income</Text>
-            </View>
-            <View style={styles.statDivider} />
-            <View style={styles.statItem}>
-              <Text style={[styles.statAmount, { color: COLORS.expense }]}>
-                {formatAmount(summary?.totalExpenses)}
-              </Text>
-              <Text style={styles.statLabel}>Total Expenses</Text>
-            </View>
-            <View style={styles.statDivider} />
-            <View style={styles.statItem}>
-              <Text style={[styles.statAmount, { color: COLORS.primary }]}>
-                {formatAmount(
-                  (summary?.totalIncome || 0) - (summary?.totalExpenses || 0)
-                )}
-              </Text>
-              <Text style={styles.statLabel}>Taxable Income</Text>
-            </View>
-          </View>
-        </Card>
-
-        {/* Annual Income Range */}
-        {user?.annualIncomeRange && (
-          <Card style={styles.incomeRangeCard}>
-            <Text style={styles.incomeRangeLabel}>Annual Income Range</Text>
-            <Text style={styles.incomeRangeValue}>{user.annualIncomeRange}</Text>
-          </Card>
-        )}
-
-        {/* Menu Items */}
-        <Card style={styles.menuCard}>
-          {menuItems.map((item, index) => (
-            <TouchableOpacity
-              key={item.label}
-              style={[
-                styles.menuItem,
-                index < menuItems.length - 1 && styles.menuItemBorder,
-              ]}
-              onPress={item.onPress}
-              activeOpacity={0.7}
-            >
-              <Text style={styles.menuIcon}>{item.icon}</Text>
-              <View style={styles.menuText}>
-                <Text style={styles.menuLabel}>{item.label}</Text>
-                <Text style={styles.menuSub}>{item.sub}</Text>
-              </View>
-              <Text style={styles.menuArrow}>›</Text>
-            </TouchableOpacity>
-          ))}
-        </Card>
-
-        {/* App Info */}
-        <View style={styles.appInfo}>
-          <Text style={styles.appInfoText}>TaxBuddy v1.0.0</Text>
-          <Text style={styles.appInfoText}>Powered by Nigerian Tax Law 🇳🇬</Text>
         </View>
 
-        {/* Logout */}
-        <TouchableOpacity
-          style={styles.logoutButton}
-          onPress={handleLogout}
-          disabled={loggingOut}
-        >
-          <Text style={styles.logoutText}>
-            {loggingOut ? 'Logging out...' : '🚪 Logout'}
-          </Text>
-        </TouchableOpacity>
-      </ScrollView>
-    </View>
+        {latestTaxRecord ? (
+          <TaxSummaryCard taxRecord={latestTaxRecord} />
+        ) : (
+          <Card>
+            <View style={styles.emptyTax}>
+              <Text style={styles.emptyTaxIcon}>📊</Text>
+              <Text style={styles.emptyTaxTitle}>No tax records yet</Text>
+              <Text style={styles.emptyTaxSub}>
+                Add your income and expenses then compute your tax
+              </Text>
+              <TouchableOpacity
+                style={styles.computeButton}
+                onPress={() => navigation.navigate('Tax')}
+              >
+                <Text style={styles.computeButtonText}>Compute Tax Now</Text>
+              </TouchableOpacity>
+            </View>
+          </Card>
+        )}
+      </View>
+
+      {/* Recent Transactions */}
+      <View style={styles.section}>
+        <View style={styles.sectionHeader}>
+          <Text style={styles.sectionTitle}>Recent Transactions</Text>
+          <TouchableOpacity onPress={() => navigation.navigate('Transactions')}>
+            <Text style={styles.seeAll}>See All →</Text>
+          </TouchableOpacity>
+        </View>
+
+        {recentTransactions.length > 0 ? (
+          recentTransactions.map((transaction) => (
+            <TransactionCard
+              key={transaction.id}
+              transaction={transaction}
+              onPress={() => navigation.navigate('Transactions')}
+            />
+          ))
+        ) : (
+          <EmptyState
+            icon="💳"
+            title="No transactions yet"
+            message="Start by adding your income and expenses"
+            actionTitle="Add Transaction"
+            onAction={() => navigation.navigate('Transactions')}
+          />
+        )}
+      </View>
+
+      {/* Nigerian Tax Info Banner */}
+      <Card style={styles.infoBanner}>
+        <View style={styles.infoRow}>
+          <Text style={styles.infoIcon}>💡</Text>
+          <View style={styles.infoText}>
+            <Text style={styles.infoTitle}>
+              {isBusinessUser ? 'Company Income Tax (CIT)' : 'Personal Income Tax (PIT)'}
+            </Text>
+            <Text style={styles.infoSub}>
+              {isBusinessUser
+                ? 'CIT: 20% for turnover below ₦100M, 30% for ₦100M and above (FIRS)'
+                : 'PIT: Progressive brackets from 7% to 24% per Nigeria PIT Act'}
+            </Text>
+          </View>
+        </View>
+      </Card>
+    </ScrollView>
   );
 }
 
@@ -341,210 +328,281 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.background,
   },
   content: {
-    paddingHorizontal: SIZES.spacing.lg,
     paddingBottom: SIZES.spacing.xxl,
   },
-  profileCard: {
-    alignItems: 'center',
-    marginBottom: SIZES.spacing.md,
-    borderColor: COLORS.primary + '33',
-    paddingVertical: SIZES.spacing.xl,
-  },
-  avatarContainer: {
-    position: 'relative',
-    marginBottom: SIZES.spacing.md,
-  },
-  avatar: {
-    width: 90,
-    height: 90,
-    borderRadius: 45,
-    backgroundColor: COLORS.primary,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  avatarImage: {
-    width: 90,
-    height: 90,
-    borderRadius: 45,
-  },
-  avatarText: {
-    fontSize: 40,
-    fontFamily: FONTS.extraBold,
-    color: COLORS.background,
-  },
-  avatarEditBadge: {
-    position: 'absolute',
-    bottom: 0,
-    right: 0,
-    width: 28,
-    height: 28,
-    borderRadius: 14,
-    backgroundColor: COLORS.card,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 2,
-    borderColor: COLORS.background,
-  },
-  avatarEditIcon: {
-    fontSize: 14,
-  },
-  profileGlow: {
-    position: 'absolute',
-    top: -4,
-    left: -4,
-    right: -4,
-    bottom: -4,
-    borderRadius: 49,
-    borderWidth: 2,
-    borderColor: COLORS.primary + '44',
-  },
-  fullname: {
-    fontSize: SIZES.xl,
-    fontFamily: FONTS.extraBold,
-    color: COLORS.textPrimary,
-    marginBottom: 4,
-  },
-  email: {
-    fontSize: SIZES.sm,
-    fontFamily: FONTS.regular,
-    color: COLORS.textSecondary,
-    marginBottom: SIZES.spacing.sm,
-  },
-  badgeRow: {
-    flexDirection: 'row',
-    gap: SIZES.spacing.xs,
-    marginBottom: SIZES.spacing.xs,
-  },
-  tinRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: SIZES.spacing.xs,
-    marginBottom: SIZES.spacing.xs,
-  },
-  tinLabel: {
-    color: COLORS.textSecondary,
-    fontSize: SIZES.sm,
-    fontFamily: FONTS.semiBold,
-  },
-  tinValue: {
-    color: COLORS.primary,
-    fontSize: SIZES.sm,
-    fontFamily: FONTS.bold,
-  },
-  tapToChange: {
-    color: COLORS.textMuted,
-    fontSize: SIZES.xs,
-    fontFamily: FONTS.regular,
-    marginTop: 4,
-  },
-  statsCard: {
-    marginBottom: SIZES.spacing.md,
-  },
-  statsTitle: {
-    fontSize: SIZES.md,
-    fontFamily: FONTS.bold,
-    color: COLORS.textPrimary,
-    marginBottom: SIZES.spacing.md,
-  },
-  statsRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  statItem: {
-    flex: 1,
-    alignItems: 'center',
-  },
-  statAmount: {
-    fontSize: SIZES.md,
-    fontFamily: FONTS.bold,
-    marginBottom: 4,
-  },
-  statLabel: {
-    fontSize: SIZES.xs,
-    fontFamily: FONTS.regular,
-    color: COLORS.textSecondary,
-    textAlign: 'center',
-  },
-  statDivider: {
-    width: 1,
-    height: 40,
-    backgroundColor: COLORS.border,
-  },
-  incomeRangeCard: {
-    marginBottom: SIZES.spacing.md,
+  header: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
+    paddingHorizontal: SIZES.spacing.lg,
+    paddingTop: 60,
+    paddingBottom: SIZES.spacing.md,
   },
-  incomeRangeLabel: {
+  greeting: {
+    fontSize: SIZES.xxl,
+    fontFamily: FONTS.extraBold,
+    color: COLORS.textPrimary,
+  },
+  subGreeting: {
     fontSize: SIZES.sm,
     fontFamily: FONTS.regular,
     color: COLORS.textSecondary,
+    marginTop: 4,
   },
-  incomeRangeValue: {
+  notifButton: {
+    width: 44,
+    height: 44,
+    borderRadius: SIZES.radius.full,
+    backgroundColor: COLORS.card,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: COLORS.border,
+  },
+  notifIcon: {
+    fontSize: 20,
+  },
+  balanceCard: {
+    marginHorizontal: SIZES.spacing.lg,
+    backgroundColor: COLORS.primary,
+    borderRadius: SIZES.radius.xl,
+    padding: SIZES.spacing.lg,
+    marginBottom: SIZES.spacing.md,
+    overflow: 'hidden',
+    ...SHADOWS.glow,
+  },
+  balanceGlow: {
+    position: 'absolute',
+    top: -50,
+    right: -50,
+    width: 200,
+    height: 200,
+    borderRadius: 100,
+    backgroundColor: 'rgba(255,255,255,0.1)',
+  },
+  balanceLabel: {
+    fontSize: SIZES.sm,
+    fontFamily: FONTS.medium,
+    color: 'rgba(0,0,0,0.6)',
+    marginBottom: SIZES.spacing.xs,
+  },
+  balanceAmount: {
+    fontSize: SIZES.display,
+    fontFamily: FONTS.extraBold,
+    color: COLORS.background,
+    marginBottom: SIZES.spacing.xs,
+  },
+  balanceSub: {
+    fontSize: SIZES.xs,
+    fontFamily: FONTS.regular,
+    color: 'rgba(0,0,0,0.5)',
+    marginBottom: SIZES.spacing.lg,
+  },
+  balanceRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(0,0,0,0.1)',
+    borderRadius: SIZES.radius.md,
+    padding: SIZES.spacing.md,
+  },
+  balanceItem: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: SIZES.spacing.sm,
+  },
+  balanceDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+  },
+  balanceDivider: {
+    width: 1,
+    height: 30,
+    backgroundColor: 'rgba(0,0,0,0.2)',
+    marginHorizontal: SIZES.spacing.sm,
+  },
+  balanceItemLabel: {
+    fontSize: SIZES.xs,
+    fontFamily: FONTS.regular,
+    color: 'rgba(0,0,0,0.6)',
+  },
+  balanceItemAmount: {
+    fontSize: SIZES.md,
+    fontFamily: FONTS.bold,
+  },
+  monthlyRow: {
+    flexDirection: 'row',
+    paddingHorizontal: SIZES.spacing.lg,
+    gap: SIZES.spacing.sm,
+    marginBottom: SIZES.spacing.md,
+  },
+  monthlyCard: {
+    flex: 1,
+    marginBottom: 0,
+  },
+  monthlyLabel: {
+    fontSize: SIZES.xs,
+    fontFamily: FONTS.regular,
+    color: COLORS.textSecondary,
+    marginBottom: 4,
+  },
+  monthlyAmount: {
+    fontSize: SIZES.lg,
+    fontFamily: FONTS.bold,
+    marginBottom: 2,
+  },
+  monthlyPeriod: {
+    fontSize: SIZES.xs,
+    fontFamily: FONTS.regular,
+    color: COLORS.textMuted,
+  },
+  chartContainer: {
+    paddingHorizontal: SIZES.spacing.lg,
+    marginBottom: SIZES.spacing.md,
+  },
+  taxAlert: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: COLORS.warningLight,
+    borderRadius: SIZES.radius.md,
+    padding: SIZES.spacing.md,
+    marginHorizontal: SIZES.spacing.lg,
+    marginBottom: SIZES.spacing.md,
+    borderWidth: 1,
+    borderColor: COLORS.warning + '44',
+    gap: SIZES.spacing.sm,
+  },
+  taxAlertIcon: {
+    fontSize: 24,
+  },
+  taxAlertText: {
+    flex: 1,
+  },
+  taxAlertTitle: {
+    fontSize: SIZES.sm,
+    fontFamily: FONTS.semiBold,
+    color: COLORS.warning,
+    marginBottom: 2,
+  },
+  taxAlertAmount: {
+    fontSize: SIZES.lg,
+    fontFamily: FONTS.bold,
+    color: COLORS.textPrimary,
+  },
+  taxAlertArrow: {
+    color: COLORS.warning,
+    fontSize: 22,
+  },
+  quickActions: {
+    flexDirection: 'row',
+    paddingHorizontal: SIZES.spacing.lg,
+    marginBottom: SIZES.spacing.lg,
+    gap: SIZES.spacing.sm,
+  },
+  quickAction: {
+    flex: 1,
+    alignItems: 'center',
+    gap: SIZES.spacing.xs,
+  },
+  quickActionIcon: {
+    width: 52,
+    height: 52,
+    borderRadius: SIZES.radius.md,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 4,
+  },
+  quickActionEmoji: {
+    fontSize: 24,
+  },
+  quickActionLabel: {
+    fontSize: SIZES.xs,
+    fontFamily: FONTS.semiBold,
+    color: COLORS.textSecondary,
+    textAlign: 'center',
+  },
+  section: {
+    paddingHorizontal: SIZES.spacing.lg,
+    marginBottom: SIZES.spacing.lg,
+  },
+  sectionHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: SIZES.spacing.sm,
+  },
+  sectionTitle: {
+    fontSize: SIZES.lg,
+    fontFamily: FONTS.bold,
+    color: COLORS.textPrimary,
+  },
+  seeAll: {
     fontSize: SIZES.sm,
     fontFamily: FONTS.semiBold,
     color: COLORS.primary,
   },
-  menuCard: {
-    marginBottom: SIZES.spacing.md,
-    padding: 0,
-    overflow: 'hidden',
-  },
-  menuItem: {
-    flexDirection: 'row',
+  emptyTax: {
     alignItems: 'center',
     padding: SIZES.spacing.md,
-    gap: SIZES.spacing.sm,
+    gap: SIZES.spacing.xs,
   },
-  menuItemBorder: {
-    borderBottomWidth: 1,
-    borderBottomColor: COLORS.border,
+  emptyTaxIcon: {
+    fontSize: 36,
+    marginBottom: SIZES.spacing.xs,
   },
-  menuIcon: {
-    fontSize: 20,
-    width: 32,
-    textAlign: 'center',
-  },
-  menuText: {
-    flex: 1,
-  },
-  menuLabel: {
-    fontSize: SIZES.md,
-    fontFamily: FONTS.semiBold,
-    color: COLORS.textPrimary,
-    marginBottom: 2,
-  },
-  menuSub: {
-    fontSize: SIZES.xs,
-    fontFamily: FONTS.regular,
-    color: COLORS.textSecondary,
-  },
-  menuArrow: {
-    color: COLORS.textSecondary,
-    fontSize: 22,
-  },
-  appInfo: {
-    alignItems: 'center',
-    gap: 4,
-    marginBottom: SIZES.spacing.lg,
-  },
-  appInfoText: {
-    color: COLORS.textMuted,
-    fontSize: SIZES.xs,
-    fontFamily: FONTS.regular,
-  },
-  logoutButton: {
-    backgroundColor: COLORS.expenseLight,
-    borderRadius: SIZES.radius.md,
-    padding: SIZES.spacing.md,
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: COLORS.expense + '44',
-  },
-  logoutText: {
-    color: COLORS.expense,
+  emptyTaxTitle: {
     fontSize: SIZES.md,
     fontFamily: FONTS.bold,
+    color: COLORS.textPrimary,
+  },
+  emptyTaxSub: {
+    fontSize: SIZES.sm,
+    fontFamily: FONTS.regular,
+    color: COLORS.textSecondary,
+    textAlign: 'center',
+    lineHeight: 20,
+  },
+  computeButton: {
+    marginTop: SIZES.spacing.sm,
+    backgroundColor: COLORS.primaryLight,
+    paddingHorizontal: SIZES.spacing.lg,
+    paddingVertical: SIZES.spacing.sm,
+    borderRadius: SIZES.radius.full,
+    borderWidth: 1,
+    borderColor: COLORS.primary,
+  },
+  computeButtonText: {
+    color: COLORS.primary,
+    fontFamily: FONTS.semiBold,
+    fontSize: SIZES.sm,
+  },
+  infoBanner: {
+    marginHorizontal: SIZES.spacing.lg,
+    borderColor: COLORS.primary + '33',
+    backgroundColor: COLORS.primaryLight,
+  },
+  infoRow: {
+    flexDirection: 'row',
+    gap: SIZES.spacing.sm,
+    alignItems: 'flex-start',
+  },
+  infoIcon: {
+    fontSize: 24,
+  },
+  infoText: {
+    flex: 1,
+  },
+  infoTitle: {
+    fontSize: SIZES.md,
+    fontFamily: FONTS.bold,
+    color: COLORS.primary,
+    marginBottom: 4,
+  },
+  infoSub: {
+    fontSize: SIZES.xs,
+    fontFamily: FONTS.regular,
+    color: COLORS.textSecondary,
+    lineHeight: 18,
   },
 });

@@ -6,24 +6,109 @@ import {
   ScrollView,
   TouchableOpacity,
   Alert,
+  Image,
+  ActivityIndicator,
 } from 'react-native';
-import { COLORS, FONTS, SIZES } from '../../utils/theme';
+import * as ImagePicker from 'expo-image-picker';
+import { COLORS, FONTS, SIZES, SHADOWS } from '../../utils/theme';
 import { AuthContext } from '../../context/AuthContext';
 import { TransactionContext } from '../../context/TransactionContext';
 import authService from '../../services/authService';
 import Header from '../../components/Header';
 import Card from '../../components/Card';
 import Badge from '../../components/Badge';
+// import { sendTestNotification, scheduleTaxReminder } from '../../utils/notifications';
 
-
-export default function ProfileScreen() {
-  const { user, logout } = useContext(AuthContext);
+export default function ProfileScreen({ navigation }) {
+  const { user, logout, login } = useContext(AuthContext);
   const { summary } = useContext(TransactionContext);
   const [loggingOut, setLoggingOut] = useState(false);
+  const [uploadingAvatar, setUploadingAvatar] = useState(false);
 
   const isBusinessUser = user?.account_type === 'business';
+
   const formatAmount = (amt) =>
     `₦${Number(amt || 0).toLocaleString('en-NG')}`;
+
+  const handlePickImage = async () => {
+    try {
+      // Request permission
+      const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (status !== 'granted') {
+        Alert.alert(
+          'Permission Required',
+          'Please allow access to your photo library to upload a profile picture.'
+        );
+        return;
+      }
+
+      Alert.alert(
+        'Update Profile Picture',
+        'Choose an option',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: '📷 Take Photo',
+            onPress: async () => {
+              const { status: cameraStatus } =
+                await ImagePicker.requestCameraPermissionsAsync();
+              if (cameraStatus !== 'granted') return;
+
+              const result = await ImagePicker.launchCameraAsync({
+                mediaTypes: ['images'],
+                allowsEditing: true,
+                aspect: [1, 1],
+                quality: 0.8,
+              });
+
+              if (!result.canceled) {
+                await handleUpload(result.assets[0].uri);
+              }
+            },
+          },
+          {
+            text: '🖼️ Choose from Gallery',
+            onPress: async () => {
+              const result = await ImagePicker.launchImageLibraryAsync({
+                mediaTypes: ['images'],
+                allowsEditing: true,
+                aspect: [1, 1],
+                quality: 0.8,
+              });
+
+              if (!result.canceled) {
+                await handleUpload(result.assets[0].uri);
+              }
+            },
+          },
+        ]
+      );
+    } catch (error) {
+      Alert.alert('Error', 'Failed to pick image');
+    }
+  };
+
+const handleUpload = async (imageUri) => {
+  setUploadingAvatar(true);
+  try {
+    console.log('🖼️ Uploading image:', imageUri);
+    const result = await authService.uploadAvatar(imageUri);
+    console.log('🖼️ Upload result:', JSON.stringify(result));
+    
+    if (result.success) {
+      const updatedUser = { ...user, avatar: result.data.avatar };
+      await login(updatedUser);
+      Alert.alert('Success! ✅', 'Profile picture updated successfully!');
+    } else {
+      Alert.alert('Error', result.message || 'Failed to upload image');
+    }
+  } catch (error) {
+    console.log('🖼️ Upload error:', error.message);
+    Alert.alert('Error', error.message);
+  } finally {
+    setUploadingAvatar(false);
+  }
+};
 
   const handleLogout = () => {
     Alert.alert(
@@ -50,68 +135,47 @@ export default function ProfileScreen() {
     );
   };
 
-const menuItems = [
-  {
-    icon: '🔔',
-    label: 'Tax Reminders',
-    sub: user?.tax_reminder ? 'Enabled' : 'Disabled',
-    onPress: () => {
-      Alert.alert(
-        'Tax Reminders',
-        'Would you like to schedule tax deadline reminders?',
-        [
-          { text: 'Cancel', style: 'cancel' },
-          {
-            text: 'Send Test Now',
-            onPress: async () => {
-              await sendTestNotification();
-              Alert.alert('✅ Done', 'You will receive a test notification in 3 seconds!');
-            },
-          },
-          {
-            text: 'Schedule All',
-            onPress: async () => {
-              await scheduleTaxReminder(7);
-              Alert.alert('✅ Done', 'Tax deadline reminders scheduled for the year!');
-            },
-          },
-        ]
-      );
+  const menuItems = [
+    {
+  icon: '🔔',
+  label: 'Tax Reminders',
+  sub: user?.tax_reminder ? 'Enabled' : 'Disabled',
+  onPress: () => Alert.alert(
+    'Tax Reminders',
+    'Tax deadline reminders will be active when you install the full app on your device.'
+  ),
+},
+    {
+      icon: '🔒',
+      label: 'Change Password',
+      sub: 'Update your password',
+      onPress: () => navigation.navigate('ChangePassword'),
     },
-  },
-  {
-    icon: '🔒',
-    label: 'Change Password',
-    sub: 'Update your password',
-    onPress: () => navigation.navigate('ChangePassword'),
-  },
-  {
-    icon: '📋',
-    label: 'Tax Information',
-    sub: isBusinessUser ? 'Company Income Tax (CIT)' : 'Personal Income Tax (PIT)',
-    onPress: () => Alert.alert(
-      isBusinessUser ? 'CIT Info' : 'PIT Info',
-      isBusinessUser
-        ? '20% for turnover below ₦100M\n30% for ₦100M and above'
-        : 'Progressive tax brackets from 7% to 24% based on annual income per Nigeria PIT Act'
-    ),
-  },
-  {
-    icon: '📞',
-    label: 'Support',
-    sub: 'Get help with Tax Tracker',
-    onPress: () => Alert.alert('Support', 'Contact us at support@taxtracker.ng'),
-  },
-  {
-    icon: '⚖️',
-    label: 'Legal & Privacy',
-    sub: 'Terms of service and privacy policy',
-    onPress: () => Alert.alert('Legal', 'Tax Tracker complies with FIRS guidelines and Nigerian tax law.'),
-  },
-];
+    {
+      icon: '📋',
+      label: 'Tax Information',
+      sub: isBusinessUser ? 'Company Income Tax (CIT)' : 'Personal Income Tax (PIT)',
+      onPress: () => Alert.alert(
+        isBusinessUser ? 'CIT Info' : 'PIT Info',
+        isBusinessUser
+          ? '20% for turnover below ₦100M\n30% for ₦100M and above'
+          : 'Progressive tax brackets from 7% to 24% based on annual income per Nigeria PIT Act'
+      ),
+    },
+    {
+      icon: '📞',
+      label: 'Support',
+      sub: 'Get help with TaxBuddy',
+      onPress: () => Alert.alert('Support', 'Contact us at support@taxbuddy.ng'),
+    },
+    {
+      icon: '⚖️',
+      label: 'Legal & Privacy',
+      sub: 'Terms of service and privacy policy',
+      onPress: () => Alert.alert('Legal', 'TaxBuddy complies with FIRS guidelines and Nigerian tax law.'),
+    },
+  ];
 
-
-  
   return (
     <View style={styles.container}>
       <Header
@@ -125,14 +189,33 @@ const menuItems = [
       >
         {/* Profile Card */}
         <Card style={styles.profileCard}>
-          <View style={styles.avatarContainer}>
-            <View style={styles.avatar}>
-              <Text style={styles.avatarText}>
-                {user?.fullname?.charAt(0)?.toUpperCase() || 'U'}
-              </Text>
+          {/* Avatar */}
+          <TouchableOpacity
+            style={styles.avatarContainer}
+            onPress={handlePickImage}
+            disabled={uploadingAvatar}
+          >
+            {uploadingAvatar ? (
+              <View style={styles.avatar}>
+                <ActivityIndicator color={COLORS.background} size="large" />
+              </View>
+            ) : user?.avatar ? (
+              <Image
+                source={{ uri: user.avatar }}
+                style={styles.avatarImage}
+              />
+            ) : (
+              <View style={styles.avatar}>
+                <Text style={styles.avatarText}>
+                  {user?.fullname?.charAt(0)?.toUpperCase() || 'U'}
+                </Text>
+              </View>
+            )}
+            <View style={styles.avatarEditBadge}>
+              <Text style={styles.avatarEditIcon}>📷</Text>
             </View>
             <View style={styles.profileGlow} />
-          </View>
+          </TouchableOpacity>
 
           <Text style={styles.fullname}>{user?.fullname}</Text>
           <Text style={styles.email}>{user?.email}</Text>
@@ -153,6 +236,8 @@ const menuItems = [
               <Text style={styles.tinValue}>{user.tin}</Text>
             </View>
           )}
+
+          <Text style={styles.tapToChange}>Tap photo to change</Text>
         </Card>
 
         {/* Stats Card */}
@@ -216,7 +301,7 @@ const menuItems = [
 
         {/* App Info */}
         <View style={styles.appInfo}>
-          <Text style={styles.appInfoText}>Tax Tracker v1.0.0</Text>
+          <Text style={styles.appInfoText}>TaxBuddy v1.0.0</Text>
           <Text style={styles.appInfoText}>Powered by Nigerian Tax Law 🇳🇬</Text>
         </View>
 
@@ -255,17 +340,38 @@ const styles = StyleSheet.create({
     marginBottom: SIZES.spacing.md,
   },
   avatar: {
-    width: 80,
-    height: 80,
-    borderRadius: 40,
+    width: 90,
+    height: 90,
+    borderRadius: 45,
     backgroundColor: COLORS.primary,
     alignItems: 'center',
     justifyContent: 'center',
   },
+  avatarImage: {
+    width: 90,
+    height: 90,
+    borderRadius: 45,
+  },
   avatarText: {
-    fontSize: 36,
+    fontSize: 40,
     fontFamily: FONTS.extraBold,
     color: COLORS.background,
+  },
+  avatarEditBadge: {
+    position: 'absolute',
+    bottom: 0,
+    right: 0,
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: COLORS.card,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 2,
+    borderColor: COLORS.background,
+  },
+  avatarEditIcon: {
+    fontSize: 14,
   },
   profileGlow: {
     position: 'absolute',
@@ -273,7 +379,7 @@ const styles = StyleSheet.create({
     left: -4,
     right: -4,
     bottom: -4,
-    borderRadius: 44,
+    borderRadius: 49,
     borderWidth: 2,
     borderColor: COLORS.primary + '44',
   },
@@ -292,12 +398,13 @@ const styles = StyleSheet.create({
   badgeRow: {
     flexDirection: 'row',
     gap: SIZES.spacing.xs,
-    marginBottom: SIZES.spacing.sm,
+    marginBottom: SIZES.spacing.xs,
   },
   tinRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: SIZES.spacing.xs,
+    marginBottom: SIZES.spacing.xs,
   },
   tinLabel: {
     color: COLORS.textSecondary,
@@ -308,6 +415,12 @@ const styles = StyleSheet.create({
     color: COLORS.primary,
     fontSize: SIZES.sm,
     fontFamily: FONTS.bold,
+  },
+  tapToChange: {
+    color: COLORS.textMuted,
+    fontSize: SIZES.xs,
+    fontFamily: FONTS.regular,
+    marginTop: 4,
   },
   statsCard: {
     marginBottom: SIZES.spacing.md,
@@ -395,7 +508,6 @@ const styles = StyleSheet.create({
   menuArrow: {
     color: COLORS.textSecondary,
     fontSize: 22,
-    fontFamily: FONTS.light,
   },
   appInfo: {
     alignItems: 'center',
