@@ -11,6 +11,10 @@ export function TransactionProvider({ children }) {
   const [incomeExpenses, setIncomeExpenses] = useState([]);
   const [summary, setSummary] = useState({ totalIncome: 0, totalExpenses: 0 });
   const [loading, setLoading] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [hasMore, setHasMore] = useState(true);
+  const [page, setPage] = useState(0);
+  const LIMIT = 10;
 
   const userId = user?.userId || user?.id;
 
@@ -22,37 +26,58 @@ export function TransactionProvider({ children }) {
       const data = result?.transactions || result?.data || result || [];
       setTransactions(Array.isArray(data) ? data : []);
     } catch (error) {
-      console.log('Error fetching transactions:', error);
       setTransactions([]);
     } finally {
       setLoading(false);
     }
   };
 
-  const fetchIncomeExpenses = async () => {
+  const fetchIncomeExpenses = async (reset = true) => {
     if (!userId) return;
-    setLoading(true);
+    if (reset) {
+      setLoading(true);
+      setPage(0);
+    } else {
+      setLoadingMore(true);
+    }
+
     try {
-      const result = await incomeExpenseService.getAll(userId);
+      const currentPage = reset ? 0 : page;
+      const result = await incomeExpenseService.getAll(userId, currentPage, LIMIT);
+
       let data = [];
       if (Array.isArray(result)) data = result;
       else if (Array.isArray(result?.data)) data = result.data;
       else if (Array.isArray(result?.records)) data = result.records;
       else if (Array.isArray(result?.incomeExpenses)) data = result.incomeExpenses;
       else if (result?.data && !Array.isArray(result.data)) data = [result.data];
-      setIncomeExpenses(data);
+
+      if (reset) {
+        setIncomeExpenses(data);
+        setPage(1);
+      } else {
+        setIncomeExpenses(prev => [...prev, ...data]);
+        setPage(prev => prev + 1);
+      }
+
+      setHasMore(result?.hasMore || false);
     } catch (error) {
-      console.log('Error fetching income/expenses:', error);
-      setIncomeExpenses([]);
+      if (reset) setIncomeExpenses([]);
     } finally {
       setLoading(false);
+      setLoadingMore(false);
     }
+  };
+
+  const loadMoreIncomeExpenses = async () => {
+    if (!hasMore || loadingMore || loading) return;
+    await fetchIncomeExpenses(false);
   };
 
   const fetchSummary = async () => {
     if (!userId) return;
     try {
-      const result = await incomeExpenseService.getAll(userId);
+      const result = await incomeExpenseService.getAll(userId, 0, 10000);
       let data = [];
       if (Array.isArray(result)) data = result;
       else if (Array.isArray(result?.data)) data = result.data;
@@ -68,7 +93,6 @@ export function TransactionProvider({ children }) {
 
       setSummary({ totalIncome, totalExpenses });
     } catch (error) {
-      console.log('Error fetching summary:', error);
       setSummary({ totalIncome: 0, totalExpenses: 0 });
     }
   };
@@ -79,7 +103,6 @@ export function TransactionProvider({ children }) {
       await fetchTransactions();
       return result;
     } catch (error) {
-      console.log('Error adding transaction:', error);
       throw error;
     }
   };
@@ -89,7 +112,6 @@ export function TransactionProvider({ children }) {
       await transactionService.delete(userId, transactionId);
       await fetchTransactions();
     } catch (error) {
-      console.log('Error deleting transaction:', error);
       throw error;
     }
   };
@@ -97,11 +119,10 @@ export function TransactionProvider({ children }) {
   const addIncomeExpense = async (data) => {
     try {
       const result = await incomeExpenseService.create(userId, data);
-      await fetchIncomeExpenses();
+      await fetchIncomeExpenses(true);
       await fetchSummary();
       return result;
     } catch (error) {
-      console.log('Error adding income/expense:', error);
       throw error;
     }
   };
@@ -109,10 +130,9 @@ export function TransactionProvider({ children }) {
   const deleteIncomeExpense = async (id) => {
     try {
       await incomeExpenseService.delete(userId, id);
-      await fetchIncomeExpenses();
+      await fetchIncomeExpenses(true);
       await fetchSummary();
     } catch (error) {
-      console.log('Error deleting income/expense:', error);
       throw error;
     }
   };
@@ -124,9 +144,12 @@ export function TransactionProvider({ children }) {
         incomeExpenses,
         summary,
         loading,
+        loadingMore,
+        hasMore,
         fetchTransactions,
         fetchIncomeExpenses,
         fetchSummary,
+        loadMoreIncomeExpenses,
         addTransaction,
         deleteTransaction,
         addIncomeExpense,

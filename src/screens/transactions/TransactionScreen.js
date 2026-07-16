@@ -8,6 +8,7 @@ import {
   RefreshControl,
   Alert,
   TextInput,
+  ActivityIndicator,
 } from 'react-native';
 import { COLORS, FONTS, SIZES } from '../../utils/theme';
 import { AuthContext } from '../../context/AuthContext';
@@ -25,9 +26,12 @@ export default function TransactionScreen() {
   const {
     incomeExpenses = [],
     loading,
+    loadingMore,
+    hasMore,
     fetchIncomeExpenses,
     fetchSummary,
     addIncomeExpense,
+    loadMoreIncomeExpenses,
   } = useContext(TransactionContext);
 
   const [modalVisible, setModalVisible] = useState(false);
@@ -40,12 +44,12 @@ export default function TransactionScreen() {
   const userId = user?.userId || user?.id;
 
   useEffect(() => {
-    if (userId) fetchIncomeExpenses();
+    if (userId) fetchIncomeExpenses(true);
   }, [userId]);
 
   const onRefresh = async () => {
     setRefreshing(true);
-    await fetchIncomeExpenses();
+    await fetchIncomeExpenses(true);
     await fetchSummary();
     setRefreshing(false);
   };
@@ -61,7 +65,7 @@ export default function TransactionScreen() {
   const handleEdit = async (id, data) => {
     try {
       await incomeExpenseService.update(userId, id, data);
-      await fetchIncomeExpenses();
+      await fetchIncomeExpenses(true);
       await fetchSummary();
     } catch (error) {
       throw error;
@@ -80,7 +84,7 @@ export default function TransactionScreen() {
           onPress: async () => {
             try {
               await incomeExpenseService.delete(userId, id);
-              await fetchIncomeExpenses();
+              await fetchIncomeExpenses(true);
               await fetchSummary();
             } catch (error) {
               Alert.alert('Error', 'Failed to delete transaction');
@@ -113,7 +117,6 @@ export default function TransactionScreen() {
     );
   };
 
-  // Filter + Search
   const filteredData = (incomeExpenses || []).filter((item) => {
     const matchesFilter = filter === 'all' || item.type === filter;
     const matchesSearch =
@@ -192,8 +195,8 @@ export default function TransactionScreen() {
               styles.filterText,
               filter === f && styles.filterTextActive,
             ]}>
-              {f === 'all' ? `All (${incomeExpenses.length})` : 
-               f === 'income' ? `Income (${incomeExpenses.filter(i => i.type === 'income').length})` : 
+              {f === 'all' ? `All (${incomeExpenses.length})` :
+               f === 'income' ? `Income (${incomeExpenses.filter(i => i.type === 'income').length})` :
                `Expenses (${incomeExpenses.filter(i => i.type === 'expense').length})`}
             </Text>
           </TouchableOpacity>
@@ -226,6 +229,30 @@ export default function TransactionScreen() {
             tintColor={COLORS.primary}
           />
         }
+        onEndReached={() => {
+          if (hasMore && !loadingMore && searchQuery === '') {
+            loadMoreIncomeExpenses();
+          }
+        }}
+        onEndReachedThreshold={0.3}
+        ListFooterComponent={() => {
+          if (loadingMore) {
+            return (
+              <View style={styles.loadingMore}>
+                <ActivityIndicator color={COLORS.primary} size="small" />
+                <Text style={styles.loadingMoreText}>Loading more...</Text>
+              </View>
+            );
+          }
+          if (!hasMore && incomeExpenses.length > 0) {
+            return (
+              <Text style={styles.noMoreText}>
+                All {incomeExpenses.length} transactions loaded ✓
+              </Text>
+            );
+          }
+          return null;
+        }}
         ListEmptyComponent={
           <EmptyState
             icon={searchQuery ? '🔍' : filter === 'income' ? '💰' : filter === 'expense' ? '💸' : '💳'}
@@ -357,6 +384,25 @@ const styles = StyleSheet.create({
   list: {
     paddingHorizontal: SIZES.spacing.lg,
     paddingBottom: 100,
+  },
+  loadingMore: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: SIZES.spacing.md,
+    gap: SIZES.spacing.sm,
+  },
+  loadingMoreText: {
+    color: COLORS.textSecondary,
+    fontSize: SIZES.sm,
+    fontFamily: FONTS.regular,
+  },
+  noMoreText: {
+    color: COLORS.textMuted,
+    fontSize: SIZES.xs,
+    fontFamily: FONTS.regular,
+    textAlign: 'center',
+    padding: SIZES.spacing.md,
   },
   fab: {
     position: 'absolute',
